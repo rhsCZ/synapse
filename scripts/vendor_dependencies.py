@@ -7,6 +7,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+import urllib.request
 from pathlib import Path
 
 
@@ -28,6 +29,12 @@ def run(command: list[str], *, cwd: Path | None = None, env: dict[str, str] | No
     subprocess.run(command, cwd=cwd, env=env, check=True)
 
 
+def download_file(url: str, destination: Path) -> None:
+    request = urllib.request.Request(url, headers={"User-Agent": "synapse-launchpad-packaging"})
+    with urllib.request.urlopen(request) as response, destination.open("wb") as handle:
+        shutil.copyfileobj(response, handle)
+
+
 def parse_wheel_requirement(filename: str) -> tuple[str, str] | None:
     if not filename.endswith(".whl"):
         return None
@@ -44,6 +51,34 @@ def parse_wheel_requirement(filename: str) -> tuple[str, str] | None:
     return distribution, version
 
 
+def download_sdist_from_pypi(package_name: str, version: str, wheel_dir: Path) -> Path | None:
+    normalized = package_name.replace("_", "-")
+    url = f"https://pypi.org/pypi/{normalized}/{version}/json"
+    request = urllib.request.Request(url, headers={"User-Agent": "synapse-launchpad-packaging"})
+
+    try:
+        with urllib.request.urlopen(request) as response:
+            payload = json.load(response)
+    except Exception:
+        return None
+
+    urls = payload.get("urls", [])
+    for artifact in urls:
+        if artifact.get("packagetype") != "sdist":
+            continue
+
+        filename = artifact.get("filename")
+        download_url = artifact.get("url")
+        if not filename or not download_url:
+            continue
+
+        destination = wheel_dir / filename
+        download_file(download_url, destination)
+        return destination
+
+    return None
+
+
 def replace_platform_wheels_with_sdists(python: str, wheel_dir: Path, artifact_paths: list[Path]) -> None:
     for artifact_path in artifact_paths:
         if artifact_path.suffix != ".whl":
@@ -58,26 +93,8 @@ def replace_platform_wheels_with_sdists(python: str, wheel_dir: Path, artifact_p
             continue
 
         package_name, version = requirement
-        before_download = set(wheel_dir.iterdir())
-        run(
-            [
-                python,
-                "-m",
-                "pip",
-                "download",
-                "--dest",
-                str(wheel_dir),
-                "--no-deps",
-                "--no-binary=:all:",
-                f"{package_name}=={version}",
-            ]
-        )
-        new_sources = [
-            path
-            for path in wheel_dir.iterdir()
-            if path not in before_download and (path.name.endswith(".tar.gz") or path.suffix == ".zip")
-        ]
-        if new_sources:
+        source_artifact = download_sdist_from_pypi(package_name, version, wheel_dir)
+        if source_artifact is not None:
             artifact_path.unlink()
 
 
