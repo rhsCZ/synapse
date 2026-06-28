@@ -1,0 +1,12 @@
+{
+  "series": [
+    {
+      "name": "noble",
+      "version_suffix": "noble1"
+    },
+    {
+      "name": "resolute",
+      "version_suffix": "resolute1"
+    }
+  ]
+}

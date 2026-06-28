@@ -1,0 +1,141 @@
+name: Check Upstream Release
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  detect:
+    runs-on: ubuntu-24.04
+    outputs:
+      is_new: ${{ steps.detect.outputs.is_new }}
+      version: ${{ steps.detect.outputs.version }}
+      tag: ${{ steps.detect.outputs.tag }}
+      tarball_url: ${{ steps.detect.outputs.tarball_url }}
+      matrix: ${{ steps.series.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - id: detect
+        run: python3 scripts/check_upstream_release.py --state versions/state.json --github-output "$GITHUB_OUTPUT"
+
+      - id: series
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+          config = json.loads(Path("config/series.json").read_text(encoding="utf-8"))
+          matrix = {"include": [{"series": item["name"]} for item in config["series"]]}
+          print(f"matrix={json.dumps(matrix)}")
+          PY
+
+  build_upload:
+    needs: detect
+    if: needs.detect.outputs.is_new == 'true'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.detect.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.96.0"
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            debhelper \
+            devscripts \
+            dh-virtualenv \
+            dpkg-dev \
+            dput-ng \
+            fakeroot \
+            libicu-dev \
+            libpq-dev \
+            libsystemd-dev \
+            lsb-release \
+            pkg-config \
+            python3-dev \
+            python3-pip \
+            python3-setuptools \
+            python3-venv \
+            python3-wheel
+
+      - uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.LAUNCHPAD_GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.LAUNCHPAD_GPG_PASSPHRASE }}
+
+      - name: Prepare source tree
+        id: prepare
+        run: |
+          source_dir="$(python3 scripts/prepare_source.py \
+            --version "${{ needs.detect.outputs.version }}" \
+            --tag "${{ needs.detect.outputs.tag }}" \
+            --series "${{ matrix.series }}" \
+            --tarball-url "${{ needs.detect.outputs.tarball_url }}")"
+          echo "source_dir=${source_dir}" >> "$GITHUB_OUTPUT"
+
+      - name: Vendor Python and Cargo dependencies
+        run: python3 scripts/vendor_dependencies.py --source-dir "${{ steps.prepare.outputs.source_dir }}"
+
+      - name: Build signed source package
+        run: |
+          bash scripts/build_source_package.sh \
+            "${{ steps.prepare.outputs.source_dir }}" \
+            "${{ secrets.LAUNCHPAD_GPG_KEY_ID }}" \
+            "dist/${{ matrix.series }}"
+
+      - name: Upload source package to Launchpad
+        env:
+          LAUNCHPAD_PPA: ${{ secrets.LAUNCHPAD_PPA }}
+        run: |
+          changes_file="$(find "dist/${{ matrix.series }}" -maxdepth 1 -name '*_source.changes' -print -quit)"
+          bash scripts/upload_to_ppa.sh "${changes_file}" "${LAUNCHPAD_PPA}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-package-${{ needs.detect.outputs.version }}-${{ matrix.series }}
+          path: dist/${{ matrix.series }}
+
+  update_state:
+    needs:
+      - detect
+      - build_upload
+    if: needs.detect.outputs.is_new == 'true' && needs.build_upload.result == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Update release state
+        run: python3 scripts/update_state.py --state versions/state.json --version "${{ needs.detect.outputs.version }}" --tag "${{ needs.detect.outputs.tag }}"
+
+      - name: Commit updated state
+        run: |
+          if git diff --quiet -- versions/state.json; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add versions/state.json
+          git commit -m "Track upstream release ${{ needs.detect.outputs.version }}"
+          git push

@@ -1,0 +1,14 @@
+work/
+dist/
+artifacts/
+vendor-cache/
+*.build
+*.buildinfo
+*.changes
+*.deb
+*.debian.tar.xz
+*.diff.gz
+*.dsc
+*.orig.tar.gz
+*.tar.gz
+*.tar.xz
