@@ -6,8 +6,11 @@ import argparse
 import json
 import shutil
 import subprocess
+import tarfile
 import tempfile
+import tomllib
 import urllib.request
+import zipfile
 from pathlib import Path
 
 
@@ -77,6 +80,95 @@ def download_sdist_from_pypi(package_name: str, version: str, wheel_dir: Path) -
         return destination
 
     return None
+
+
+def read_pyproject_from_sdist(artifact_path: Path) -> dict | None:
+    if artifact_path.name.endswith(".tar.gz"):
+        with tarfile.open(artifact_path, "r:gz") as archive:
+            members = [member for member in archive.getmembers() if member.name.endswith("/pyproject.toml") or member.name == "pyproject.toml"]
+            if not members:
+                return None
+            fileobj = archive.extractfile(members[0])
+            if fileobj is None:
+                return None
+            return tomllib.loads(fileobj.read().decode("utf-8"))
+
+    if artifact_path.suffix == ".zip":
+        with zipfile.ZipFile(artifact_path) as archive:
+            members = [name for name in archive.namelist() if name.endswith("/pyproject.toml") or name == "pyproject.toml"]
+            if not members:
+                return None
+            return tomllib.loads(archive.read(members[0]).decode("utf-8"))
+
+    return None
+
+
+def discover_build_requirements(artifact_path: Path) -> list[str]:
+    pyproject = read_pyproject_from_sdist(artifact_path)
+    if pyproject is None:
+        return ["setuptools", "wheel"]
+
+    build_system = pyproject.get("build-system", {})
+    requires = build_system.get("requires")
+    if not requires:
+        return ["setuptools", "wheel"]
+
+    return [str(requirement) for requirement in requires]
+
+
+def recursive_vendor_build_requirements(python: str, wheel_dir: Path, vendor_dir: Path) -> None:
+    build_requirements: list[str] = []
+    seen_requirements: set[str] = set()
+    inspected_sdists: set[Path] = set()
+
+    while True:
+        sdists = [
+            path for path in wheel_dir.iterdir()
+            if path.is_file() and (path.name.endswith(".tar.gz") or path.suffix == ".zip")
+        ]
+        pending_sdists = [path for path in sdists if path not in inspected_sdists]
+        if not pending_sdists:
+            break
+
+        new_requirements: list[str] = []
+        for artifact_path in pending_sdists:
+            inspected_sdists.add(artifact_path)
+            for requirement in discover_build_requirements(artifact_path):
+                if requirement in seen_requirements:
+                    continue
+                seen_requirements.add(requirement)
+                build_requirements.append(requirement)
+                new_requirements.append(requirement)
+
+        if not new_requirements:
+            continue
+
+        temp_requirements = vendor_dir / ".build-requirements.in"
+        temp_requirements.write_text(
+            "".join(f"{requirement}\n" for requirement in new_requirements),
+            encoding="utf-8",
+            newline="\n",
+        )
+        run(
+            [
+                python,
+                "-m",
+                "pip",
+                "download",
+                "--dest",
+                str(wheel_dir),
+                "--requirement",
+                str(temp_requirements),
+            ]
+        )
+        temp_requirements.unlink(missing_ok=True)
+
+    build_requirements_path = vendor_dir / "build-requirements.txt"
+    build_requirements_path.write_text(
+        "".join(f"{requirement}\n" for requirement in build_requirements),
+        encoding="utf-8",
+        newline="\n",
+    )
 
 
 def replace_platform_wheels_with_sdists(python: str, wheel_dir: Path, artifact_paths: list[Path]) -> None:
@@ -197,6 +289,7 @@ def main() -> int:
     )
     downloaded_artifacts = [path for path in wheel_dir.iterdir() if path not in existing_artifacts]
     replace_platform_wheels_with_sdists(args.python, wheel_dir, downloaded_artifacts)
+    recursive_vendor_build_requirements(args.python, wheel_dir, vendor_dir)
 
     cargo_lock = source_dir / "Cargo.lock"
     if cargo_lock.exists():
