@@ -6,6 +6,7 @@ import argparse
 import json
 import re
 import shutil
+import stat
 import tarfile
 import tempfile
 import tomllib
@@ -19,12 +20,22 @@ PACKAGE_NAME = "matrix-synapse-py3"
 MAINTAINER = "Synapse Packaging team <packages@matrix.org>"
 
 
-def read_series_suffix(config_path: Path, series_name: str) -> str:
+def read_series_suffix_prefix(config_path: Path, series_name: str) -> str:
     config = json.loads(config_path.read_text(encoding="utf-8"))
     for item in config["series"]:
         if item["name"] == series_name:
-            return item["version_suffix"]
+            return item["version_suffix_prefix"]
     raise ValueError(f"Unknown series '{series_name}' in {config_path}")
+
+
+def read_upload_revision(state_path: Path, version: str, series_name: str) -> int:
+    if not state_path.exists():
+        return 1
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    uploads = state.get("uploads", {})
+    series_uploads = uploads.get(version, {})
+    return int(series_uploads.get(series_name, 0)) + 1
 
 
 def download_file(url: str, destination: Path) -> None:
@@ -57,6 +68,13 @@ def write_changelog(path: Path, version: str, series: str, tag: str) -> None:
         f" -- {MAINTAINER}  {timestamp}\n"
     )
     path.write_text(content, encoding="utf-8", newline="\n")
+
+
+def ensure_executable(path: Path) -> None:
+    if not path.exists():
+        return
+
+    path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
 def extract_minimum_poetry_version(source_dir: Path) -> str:
@@ -107,6 +125,7 @@ def write_metadata(
     tag: str,
     series: str,
     source_dir: Path,
+    revision: int,
     poetry_version: str,
     export_extras: list[str],
 ) -> None:
@@ -115,6 +134,7 @@ def write_metadata(
         "package_version": version,
         "series": series,
         "tag": tag,
+        "revision": revision,
         "poetry_version": poetry_version,
         "export_extras": export_extras,
         "prepared_at": datetime.now(timezone.utc).isoformat(),
@@ -131,16 +151,19 @@ def main() -> int:
     parser.add_argument("--config", default="config/series.json")
     parser.add_argument("--template-dir", default="debian-template")
     parser.add_argument("--output-dir", default="work/prepared")
+    parser.add_argument("--upload-state", default="versions/uploads.json")
     parser.add_argument("--tarball-url")
     args = parser.parse_args()
 
     config_path = Path(args.config).resolve()
     template_dir = Path(args.template_dir).resolve()
     output_dir = Path(args.output_dir).resolve()
+    upload_state_path = Path(args.upload_state).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    suffix = read_series_suffix(config_path, args.series)
-    package_version = f"{args.version}+{suffix}"
+    suffix_prefix = read_series_suffix_prefix(config_path, args.series)
+    revision = read_upload_revision(upload_state_path, args.version, args.series)
+    package_version = f"{args.version}+{suffix_prefix}{revision}"
     source_dir = output_dir / f"{PACKAGE_NAME}-{package_version}"
 
     if source_dir.exists():
@@ -159,6 +182,8 @@ def main() -> int:
     if debian_dir.exists():
         shutil.rmtree(debian_dir)
     shutil.copytree(template_dir, debian_dir)
+    ensure_executable(debian_dir / "rules")
+    ensure_executable(debian_dir / "build_virtualenv")
 
     generated_files = [
         debian_dir / "files",
@@ -180,6 +205,7 @@ def main() -> int:
         tag=args.tag,
         series=args.series,
         source_dir=source_dir,
+        revision=revision,
         poetry_version=poetry_version,
         export_extras=export_extras,
     )

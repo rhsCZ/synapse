@@ -127,15 +127,22 @@ jobs:
           python-version: "3.12"
 
       - name: Update release state
-        run: python3 scripts/update_state.py --state versions/state.json --version "${{ needs.detect.outputs.version }}" --tag "${{ needs.detect.outputs.tag }}"
+        run: |
+          python3 scripts/update_state.py \
+            --state versions/state.json \
+            --uploads-state versions/uploads.json \
+            --version "${{ needs.detect.outputs.version }}" \
+            --tag "${{ needs.detect.outputs.tag }}" \
+            --series noble \
+            --series resolute
 
       - name: Commit updated state
         run: |
-          if git diff --quiet -- versions/state.json; then
+          if git diff --quiet -- versions/state.json versions/uploads.json; then
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add versions/state.json
+          git add versions/state.json versions/uploads.json
           git commit -m "Track upstream release ${{ needs.detect.outputs.version }}"
           git push

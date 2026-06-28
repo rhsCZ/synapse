@@ -19,10 +19,11 @@ signed source package to a Launchpad PPA.
 ## Repository layout
 
 - `debian-template/` Debian packaging template copied into each prepared source tree
-- `config/series.json` target Ubuntu series and package version suffixes
+- `config/series.json` target Ubuntu series and version suffix prefixes
 - `scripts/` release detection, source preparation, vendoring, source build, and upload helpers
 - `.github/workflows/` scheduled and manual GitHub Actions workflows
 - `versions/state.json` last successfully uploaded upstream release
+- `versions/uploads.json` upload counters used to increment suffixes such as `noble1`, `noble2`, ...
 
 ## Required GitHub secrets
 
@@ -75,3 +76,4 @@ Notes:
 
 - The current template keeps Debian source format `3.0 (native)` to match the packaging you already have.
 - Vendoring is done during the GitHub workflow because Launchpad builders cannot fetch from PyPI or crates.io during package builds.
+- Upload suffixes are tracked per upstream version and Ubuntu series. Re-uploading `1.155.0` for `noble` increments the package version from `1.155.0+noble1` to `1.155.0+noble2`.

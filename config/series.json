@@ -2,11 +2,11 @@
   "series": [
     {
       "name": "noble",
-      "version_suffix": "noble1"
+      "version_suffix_prefix": "noble"
     },
     {
       "name": "resolute",
-      "version_suffix": "resolute1"
+      "version_suffix_prefix": "resolute"
     }
   ]
 }
