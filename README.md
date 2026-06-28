@@ -29,7 +29,7 @@ signed source package to a Launchpad PPA.
 - `LAUNCHPAD_GPG_PRIVATE_KEY` ASCII-armored private key used to sign source uploads
 - `LAUNCHPAD_GPG_PASSPHRASE` passphrase for the private key
 - `LAUNCHPAD_GPG_KEY_ID` key ID used by `dpkg-buildpackage`
-- `LAUNCHPAD_PPA` target upload shortcut, for example `ppa:example/synapse`
+- `LAUNCHPAD_PPA` target upload shortcut, for example `ppa:example/ubuntu/synapse`
 
 Example values:
 
@@ -55,7 +55,7 @@ LAUNCHPAD_GPG_KEY_ID
 
 ```text
 LAUNCHPAD_PPA
-ppa:your-launchpad-team/synapse
+ppa:your-launchpad-team/ubuntu/synapse
 ```
 
 Notes:
@@ -63,7 +63,7 @@ Notes:
 - `LAUNCHPAD_GPG_PRIVATE_KEY` must be the full ASCII-armored secret key exported with `gpg --armor --export-secret-keys <KEY_ID>`.
 - `LAUNCHPAD_GPG_PASSPHRASE` is the passphrase protecting that private key. If you create an unprotected CI-only key, this secret can be left empty, but using a passphrase is safer.
 - `LAUNCHPAD_GPG_KEY_ID` should match the signing key imported into Launchpad. A long key ID or full fingerprint is preferable.
-- `LAUNCHPAD_PPA` is the `dput` target in Launchpad shortcut form. Typical values look like `ppa:your-user/synapse` or `ppa:your-team/packages`.
+- `LAUNCHPAD_PPA` is the `dput` target in Launchpad shortcut form. Typical values look like `ppa:your-user/ubuntu/synapse` or `ppa:your-team/ubuntu/packages`.
 
 ## Required Launchpad setup
 

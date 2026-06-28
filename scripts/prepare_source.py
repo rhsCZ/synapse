@@ -102,6 +102,8 @@ def main() -> int:
         shutil.copytree(extracted_root, source_dir)
 
     debian_dir = source_dir / "debian"
+    if debian_dir.exists():
+        shutil.rmtree(debian_dir)
     shutil.copytree(template_dir, debian_dir)
 
     generated_files = [
