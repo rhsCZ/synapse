@@ -100,8 +100,9 @@ if [ -f debian/vendor/build-requirements.txt ] && [ -s debian/vendor/build-requi
     done < debian/vendor/build-requirements.txt
 fi
 
-# Use --no-deps to only install pinned versions in exported_requirements.txt,
-# and to avoid https://github.com/pypa/pip/issues/9644
+# Keep installs fully offline from the vendored wheel directory. We intentionally
+# do not pass --no-deps here: pip needs dependency resolution inside build
+# isolation for vendored sdists such as maturin and pydantic-core.
 dh_virtualenv \
     --install-suffix "matrix-synapse" \
     --builtin-venv \
@@ -110,7 +111,6 @@ dh_virtualenv \
     "${DH_VIRTUALENV_PREINSTALL_ARGS[@]}" \
     --extra-pip-arg="--no-index" \
     --extra-pip-arg="--find-links=$(pwd)/debian/vendor/wheels" \
-    --extra-pip-arg="--no-deps" \
     --extra-pip-arg="--no-cache-dir" \
     --extra-pip-arg="--compile" \
     --requirements="debian/vendor/exported_requirements.txt"
