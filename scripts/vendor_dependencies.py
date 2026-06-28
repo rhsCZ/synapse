@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import tarfile
@@ -33,10 +34,63 @@ def run(command: list[str], *, cwd: Path | None = None, env: dict[str, str] | No
     subprocess.run(command, cwd=cwd, env=env, check=True)
 
 
+def run_result(command: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    print("+", " ".join(command))
+    return subprocess.run(command, cwd=cwd, env=env, text=True)
+
+
+def venv_executable(venv_dir: Path, name: str) -> Path:
+    scripts_dir = venv_dir / "Scripts"
+    if scripts_dir.exists():
+        suffix = ".exe" if name == "python" else ".exe"
+        candidate = scripts_dir / f"{name}{suffix}"
+        if candidate.exists():
+            return candidate
+
+    bin_dir = venv_dir / "bin"
+    return bin_dir / name
+
+
 def download_file(url: str, destination: Path) -> None:
     request = urllib.request.Request(url, headers={"User-Agent": "synapse-launchpad-packaging"})
-    with urllib.request.urlopen(request) as response, destination.open("wb") as handle:
-        shutil.copyfileobj(response, handle)
+    try:
+        with urllib.request.urlopen(request) as response, destination.open("wb") as handle:
+            shutil.copyfileobj(response, handle)
+        return
+    except Exception:
+        if os.name != "nt":
+            raise
+
+    run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            f"Invoke-WebRequest -Uri '{url}' -OutFile '{destination}'",
+        ]
+    )
+
+
+def fetch_json(url: str) -> dict | None:
+    request = urllib.request.Request(url, headers={"User-Agent": "synapse-launchpad-packaging"})
+    try:
+        with urllib.request.urlopen(request) as response:
+            return json.load(response)
+    except Exception:
+        if os.name != "nt":
+            return None
+
+    with tempfile.TemporaryDirectory() as temp_dir_name:
+        temp_path = Path(temp_dir_name) / "payload.json"
+        run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                f"Invoke-WebRequest -Uri '{url}' -OutFile '{temp_path}'",
+            ]
+        )
+        return json.loads(temp_path.read_text(encoding="utf-8"))
 
 
 def parse_wheel_requirement(filename: str) -> tuple[str, str] | None:
@@ -58,12 +112,8 @@ def parse_wheel_requirement(filename: str) -> tuple[str, str] | None:
 def download_sdist_from_pypi(package_name: str, version: str, wheel_dir: Path) -> Path | None:
     normalized = package_name.replace("_", "-")
     url = f"https://pypi.org/pypi/{normalized}/{version}/json"
-    request = urllib.request.Request(url, headers={"User-Agent": "synapse-launchpad-packaging"})
-
-    try:
-        with urllib.request.urlopen(request) as response:
-            payload = json.load(response)
-    except Exception:
+    payload = fetch_json(url)
+    if payload is None:
         return None
 
     urls = payload.get("urls", [])
@@ -81,6 +131,106 @@ def download_sdist_from_pypi(package_name: str, version: str, wheel_dir: Path) -
         return destination
 
     return None
+
+
+def parse_exported_requirements(requirements_path: Path) -> list[tuple[str, str]]:
+    logical_lines: list[str] = []
+    current = ""
+
+    for raw_line in requirements_path.read_text(encoding="utf-8").splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        if stripped.endswith("\\"):
+            current += stripped[:-1].rstrip() + " "
+            continue
+
+        current += stripped
+        logical_lines.append(current)
+        current = ""
+
+    if current:
+        logical_lines.append(current)
+
+    requirements: list[tuple[str, str]] = []
+    for line in logical_lines:
+        base = line.split(" --hash=", 1)[0].split(";", 1)[0].strip()
+        if "==" not in base:
+            continue
+
+        package_name, version = base.split("==", 1)
+        package_name = package_name.strip()
+        version = version.strip()
+        if package_name and version:
+            requirements.append((package_name, version))
+
+    return requirements
+
+
+def download_exact_requirement(python: str, wheel_dir: Path, package_name: str, version: str) -> None:
+    requirement = f"{package_name}=={version}"
+    result = run_result(
+        [
+            python,
+            "-m",
+            "pip",
+            "download",
+            "--dest",
+            str(wheel_dir),
+            "--no-deps",
+            "--only-binary=:all:",
+            requirement,
+        ]
+    )
+    if result.returncode == 0:
+        return
+
+    source_artifact = download_sdist_from_pypi(package_name, version, wheel_dir)
+    if source_artifact is not None:
+        return
+
+    raise subprocess.CalledProcessError(result.returncode, result.args)
+
+
+def download_exported_requirements(python: str, requirements_path: Path, wheel_dir: Path) -> None:
+    for package_name, version in parse_exported_requirements(requirements_path):
+        download_exact_requirement(python, wheel_dir, package_name, version)
+
+
+def download_build_requirement(python: str, wheel_dir: Path, requirement: str) -> None:
+    binary_result = run_result(
+        [
+            python,
+            "-m",
+            "pip",
+            "download",
+            "--dest",
+            str(wheel_dir),
+            "--no-deps",
+            "--only-binary=:all:",
+            requirement,
+        ]
+    )
+    if binary_result.returncode == 0:
+        return
+
+    source_result = run_result(
+        [
+            python,
+            "-m",
+            "pip",
+            "download",
+            "--dest",
+            str(wheel_dir),
+            "--no-deps",
+            requirement,
+        ]
+    )
+    if source_result.returncode == 0:
+        return
+
+    raise subprocess.CalledProcessError(source_result.returncode, source_result.args)
 
 
 def read_pyproject_from_sdist(artifact_path: Path) -> dict | None:
@@ -150,18 +300,8 @@ def recursive_vendor_build_requirements(python: str, wheel_dir: Path, vendor_dir
             encoding="utf-8",
             newline="\n",
         )
-        run(
-            [
-                python,
-                "-m",
-                "pip",
-                "download",
-                "--dest",
-                str(wheel_dir),
-                "--requirement",
-                str(temp_requirements),
-            ]
-        )
+        for requirement in new_requirements:
+            download_build_requirement(python, wheel_dir, requirement)
         newly_downloaded = [
             path
             for path in wheel_dir.iterdir()
@@ -220,6 +360,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-dir", required=True)
     parser.add_argument("--python", default="python3")
+    parser.add_argument("--skip-cargo", action="store_true")
     args = parser.parse_args()
 
     source_dir = Path(args.source_dir).resolve()
@@ -262,7 +403,7 @@ def main() -> int:
 
         run([args.python, "-m", "venv", str(venv_dir)])
 
-        venv_python = venv_dir / "bin" / "python"
+        venv_python = venv_executable(venv_dir, "python")
         run(
             [
                 str(venv_python),
@@ -276,31 +417,22 @@ def main() -> int:
                 f"poetry-plugin-export=={POETRY_PLUGIN_EXPORT_VERSION}",
             ]
         )
-        export_command = [str(venv_dir / "bin" / "poetry"), "export"]
+        export_command = [str(venv_executable(venv_dir, "poetry")), "export"]
         for extra in export_extras:
             export_command.extend(["--extras", extra])
         export_command.extend(["-o", str(requirements_path)])
         run(export_command, cwd=source_dir)
 
     existing_artifacts = set(wheel_dir.iterdir())
-    run(
-        [
-            args.python,
-            "-m",
-            "pip",
-            "download",
-            "--dest",
-            str(wheel_dir),
-            "--requirement",
-            str(requirements_path),
-        ]
-    )
+    download_exported_requirements(args.python, requirements_path, wheel_dir)
     downloaded_artifacts = [path for path in wheel_dir.iterdir() if path not in existing_artifacts]
     replace_platform_wheels_with_sdists(args.python, wheel_dir, downloaded_artifacts)
     recursive_vendor_build_requirements(args.python, wheel_dir, vendor_dir)
 
     cargo_lock = source_dir / "Cargo.lock"
-    if cargo_lock.exists():
+    if args.skip_cargo:
+        print("Skipping cargo vendor as requested.")
+    elif cargo_lock.exists():
         run(["cargo", "vendor", "--locked", str(cargo_vendor_dir)], cwd=source_dir)
         cargo_config_dir = source_dir / ".cargo"
         cargo_config_dir.mkdir(parents=True, exist_ok=True)
