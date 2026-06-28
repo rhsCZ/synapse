@@ -18,6 +18,7 @@ DEFAULT_POETRY_VERSION = "2.1.1"
 POETRY_PLUGIN_EXPORT_VERSION = "1.9.0"
 DEFAULT_EXPORT_EXTRAS = ["all", "test", "systemd"]
 TOOLING_WHEEL_PREFIXES = (
+    "mock-",
     "pip-",
     "setuptools-",
     "wheel-",
@@ -240,6 +241,7 @@ def main() -> int:
             "download",
             "--dest",
             str(wheel_dir),
+            "mock",
             "pip",
             "setuptools",
             "wheel",
