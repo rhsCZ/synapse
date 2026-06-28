@@ -3,19 +3,29 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
 
-POETRY_VERSION = "2.1.1"
+DEFAULT_POETRY_VERSION = "2.1.1"
 POETRY_PLUGIN_EXPORT_VERSION = "1.9.0"
 
 
 def run(command: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
     print("+", " ".join(command))
     subprocess.run(command, cwd=cwd, env=env, check=True)
+
+
+def read_poetry_version(source_dir: Path) -> str:
+    metadata_path = source_dir / ".packaging-info.json"
+    if not metadata_path.exists():
+        return DEFAULT_POETRY_VERSION
+
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    return metadata.get("poetry_version", DEFAULT_POETRY_VERSION)
 
 
 def main() -> int:
@@ -30,11 +40,14 @@ def main() -> int:
     wheel_dir = vendor_dir / "wheels"
     cargo_vendor_dir = vendor_dir / "cargo"
     requirements_path = vendor_dir / "exported_requirements.txt"
+    poetry_version = read_poetry_version(source_dir)
 
     if vendor_dir.exists():
         shutil.rmtree(vendor_dir)
     wheel_dir.mkdir(parents=True, exist_ok=True)
     cargo_vendor_dir.mkdir(parents=True, exist_ok=True)
+
+    (vendor_dir / "poetry-version.txt").write_text(poetry_version + "\n", encoding="utf-8", newline="\n")
 
     run(
         [
@@ -47,7 +60,7 @@ def main() -> int:
             "pip",
             "setuptools",
             "wheel",
-            f"poetry=={POETRY_VERSION}",
+            f"poetry=={poetry_version}",
             f"poetry-plugin-export=={POETRY_PLUGIN_EXPORT_VERSION}",
         ]
     )
@@ -68,7 +81,7 @@ def main() -> int:
                 "--no-index",
                 "--find-links",
                 str(wheel_dir),
-                f"poetry=={POETRY_VERSION}",
+                f"poetry=={poetry_version}",
                 f"poetry-plugin-export=={POETRY_PLUGIN_EXPORT_VERSION}",
             ]
         )

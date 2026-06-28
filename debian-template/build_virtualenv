@@ -10,6 +10,7 @@ export HOME=/tmp
 export DH_VIRTUALENV_INSTALL_ROOT=/opt/venvs
 export PIP_NO_INDEX=1
 export PIP_FIND_LINKS="$(pwd)/debian/vendor/wheels"
+POETRY_VERSION="$(cat debian/vendor/poetry-version.txt 2>/dev/null || echo 2.1.1)"
 
 # make sure that the virtualenv links to the specific version of python, by
 # dereferencing the python3 symlink.
@@ -66,7 +67,7 @@ pip install \
 pip install \
     --no-index \
     --find-links "$PIP_FIND_LINKS" \
-    poetry==2.1.1 poetry-plugin-export==1.9.0
+    "poetry==${POETRY_VERSION}" poetry-plugin-export==1.9.0
 poetry export \
     --extras all \
     --extras test \

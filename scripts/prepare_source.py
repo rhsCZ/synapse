@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import tarfile
 import tempfile
+import tomllib
 import urllib.request
 from datetime import datetime, timezone
 from email.utils import format_datetime
@@ -57,12 +59,33 @@ def write_changelog(path: Path, version: str, series: str, tag: str) -> None:
     path.write_text(content, encoding="utf-8", newline="\n")
 
 
-def write_metadata(path: Path, *, version: str, tag: str, series: str, source_dir: Path) -> None:
+def extract_minimum_poetry_version(source_dir: Path) -> str:
+    pyproject_path = source_dir / "pyproject.toml"
+    if not pyproject_path.exists():
+        pyproject_path = source_dir / "build" / "pyproject.toml"
+    if not pyproject_path.exists():
+        raise FileNotFoundError("pyproject.toml was not found in the prepared source tree")
+
+    pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    poetry_requirement = pyproject.get("tool", {}).get("poetry", {}).get("requires-poetry")
+    if not poetry_requirement:
+        return "2.1.1"
+
+    for pattern in (r">=\s*([0-9]+(?:\.[0-9]+){1,2})", r"==\s*([0-9]+(?:\.[0-9]+){1,2})", r">\s*([0-9]+(?:\.[0-9]+){1,2})"):
+        match = re.search(pattern, poetry_requirement)
+        if match:
+            return match.group(1)
+
+    raise ValueError(f"Unsupported requires-poetry constraint: {poetry_requirement}")
+
+
+def write_metadata(path: Path, *, version: str, tag: str, series: str, source_dir: Path, poetry_version: str) -> None:
     metadata = {
         "package_name": PACKAGE_NAME,
         "package_version": version,
         "series": series,
         "tag": tag,
+        "poetry_version": poetry_version,
         "prepared_at": datetime.now(timezone.utc).isoformat(),
         "source_dir": str(source_dir),
     }
@@ -117,8 +140,16 @@ def main() -> int:
             else:
                 path.unlink()
 
+    poetry_version = extract_minimum_poetry_version(source_dir)
     write_changelog(debian_dir / "changelog", package_version, args.series, args.tag)
-    write_metadata(source_dir / ".packaging-info.json", version=package_version, tag=args.tag, series=args.series, source_dir=source_dir)
+    write_metadata(
+        source_dir / ".packaging-info.json",
+        version=package_version,
+        tag=args.tag,
+        series=args.series,
+        source_dir=source_dir,
+        poetry_version=poetry_version,
+    )
 
     print(source_dir)
     return 0
