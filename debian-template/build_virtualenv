@@ -85,6 +85,16 @@ PY
     rm -rf "$TEMP_VENV"
 fi
 
+if [ -f debian/vendor/build-requirements.txt ] && [ -s debian/vendor/build-requirements.txt ]; then
+    echo "Installing vendored build requirements from debian/vendor/build-requirements.txt"
+    pip install \
+        --no-index \
+        --find-links "$PIP_FIND_LINKS" \
+        --no-cache-dir \
+        --compile \
+        -r debian/vendor/build-requirements.txt
+fi
+
 # Use --no-deps to only install pinned versions in exported_requirements.txt,
 # and to avoid https://github.com/pypa/pip/issues/9644
 dh_virtualenv \

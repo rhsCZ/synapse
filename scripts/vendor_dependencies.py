@@ -162,11 +162,17 @@ def recursive_vendor_build_requirements(python: str, wheel_dir: Path, vendor_dir
                 str(temp_requirements),
             ]
         )
+        newly_downloaded = [
+            path
+            for path in wheel_dir.iterdir()
+            if path not in inspected_sdists and path.is_file()
+        ]
+        replace_platform_wheels_with_sdists(python, wheel_dir, newly_downloaded)
         temp_requirements.unlink(missing_ok=True)
 
     build_requirements_path = vendor_dir / "build-requirements.txt"
     build_requirements_path.write_text(
-        "".join(f"{requirement}\n" for requirement in build_requirements),
+        "".join(f"{requirement}\n" for requirement in dict.fromkeys(build_requirements)),
         encoding="utf-8",
         newline="\n",
     )
