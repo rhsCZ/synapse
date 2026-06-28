@@ -77,6 +77,32 @@ def ensure_executable(path: Path) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
+def ensure_non_executable(path: Path) -> None:
+    if not path.exists():
+        return
+
+    path.chmod(path.stat().st_mode & ~(stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH))
+
+
+def normalize_debian_permissions(debian_dir: Path) -> None:
+    executable_files = {
+        "build_virtualenv",
+        "manage_debconf.pl",
+        "matrix-synapse-py3.config",
+        "matrix-synapse-py3.postinst",
+        "rules",
+    }
+
+    for path in debian_dir.iterdir():
+        if not path.is_file():
+            continue
+
+        if path.name in executable_files:
+            ensure_executable(path)
+        else:
+            ensure_non_executable(path)
+
+
 def extract_minimum_poetry_version(source_dir: Path) -> str:
     pyproject_path = source_dir / "pyproject.toml"
     if not pyproject_path.exists():
@@ -182,12 +208,11 @@ def main() -> int:
     if debian_dir.exists():
         shutil.rmtree(debian_dir)
     shutil.copytree(template_dir, debian_dir)
-    ensure_executable(debian_dir / "rules")
-    ensure_executable(debian_dir / "build_virtualenv")
+    normalize_debian_permissions(debian_dir)
 
     generated_files = [
         debian_dir / "files",
-        debian_dir / "vendor",
+        source_dir / "vendor",
     ]
     for path in generated_files:
         if path.exists():

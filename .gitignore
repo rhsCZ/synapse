@@ -2,6 +2,8 @@ work/
 dist/
 artifacts/
 vendor-cache/
+__pycache__/
+*.pyc
 *.build
 *.buildinfo
 *.changes

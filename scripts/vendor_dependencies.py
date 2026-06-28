@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import time
 import shutil
 import subprocess
 import tarfile
@@ -27,6 +28,25 @@ TOOLING_WHEEL_PREFIXES = (
     "poetry_core-",
     "poetry_plugin_export-",
 )
+KEEP_PLATFORM_WHEELS = {
+    "maturin",
+}
+BINARY_VENDOR_SUFFIXES = {
+    ".a",
+    ".bin",
+    ".blb",
+    ".crt",
+    ".der",
+    ".dll",
+    ".dylib",
+    ".exe",
+    ".key",
+    ".lib",
+    ".o",
+    ".p8",
+    ".png",
+    ".so",
+}
 
 
 def run(command: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
@@ -53,13 +73,20 @@ def venv_executable(venv_dir: Path, name: str) -> Path:
 
 def download_file(url: str, destination: Path) -> None:
     request = urllib.request.Request(url, headers={"User-Agent": "synapse-launchpad-packaging"})
-    try:
-        with urllib.request.urlopen(request) as response, destination.open("wb") as handle:
-            shutil.copyfileobj(response, handle)
-        return
-    except Exception:
-        if os.name != "nt":
-            raise
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request) as response, destination.open("wb") as handle:
+                shutil.copyfileobj(response, handle)
+            return
+        except Exception as exc:
+            last_error = exc
+            destination.unlink(missing_ok=True)
+            if attempt < 2:
+                time.sleep(1 + attempt)
+                continue
+            if os.name != "nt":
+                raise
 
     run(
         [
@@ -69,16 +96,22 @@ def download_file(url: str, destination: Path) -> None:
             f"Invoke-WebRequest -Uri '{url}' -OutFile '{destination}'",
         ]
     )
+    if last_error is not None and not destination.exists():
+        raise last_error
 
 
 def fetch_json(url: str) -> dict | None:
     request = urllib.request.Request(url, headers={"User-Agent": "synapse-launchpad-packaging"})
-    try:
-        with urllib.request.urlopen(request) as response:
-            return json.load(response)
-    except Exception:
-        if os.name != "nt":
-            return None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request) as response:
+                return json.load(response)
+        except Exception:
+            if attempt < 2:
+                time.sleep(1 + attempt)
+                continue
+            if os.name != "nt":
+                return None
 
     with tempfile.TemporaryDirectory() as temp_dir_name:
         temp_path = Path(temp_dir_name) / "payload.json"
@@ -129,6 +162,34 @@ def download_sdist_from_pypi(package_name: str, version: str, wheel_dir: Path) -
         destination = wheel_dir / filename
         download_file(download_url, destination)
         return destination
+
+    return None
+
+
+def download_sdist_with_pip(python: str, wheel_dir: Path, package_name: str, version: str) -> Path | None:
+    before = set(wheel_dir.iterdir())
+    requirement = f"{package_name}=={version}"
+    result = run_result(
+        [
+            python,
+            "-m",
+            "pip",
+            "download",
+            "--dest",
+            str(wheel_dir),
+            "--no-deps",
+            "--no-binary=:all:",
+            requirement,
+        ]
+    )
+    if result.returncode != 0:
+        return None
+
+    for path in wheel_dir.iterdir():
+        if path in before or not path.is_file():
+            continue
+        if path.name.endswith(".tar.gz") or path.suffix == ".zip":
+            return path
 
     return None
 
@@ -187,6 +248,8 @@ def download_exact_requirement(python: str, wheel_dir: Path, package_name: str, 
         return
 
     source_artifact = download_sdist_from_pypi(package_name, version, wheel_dir)
+    if source_artifact is None:
+        source_artifact = download_sdist_with_pip(python, wheel_dir, package_name, version)
     if source_artifact is not None:
         return
 
@@ -332,9 +395,11 @@ def replace_platform_wheels_with_sdists(python: str, wheel_dir: Path, artifact_p
             continue
 
         package_name, version = requirement
+        if package_name in KEEP_PLATFORM_WHEELS:
+            continue
         source_artifact = download_sdist_from_pypi(package_name, version, wheel_dir)
-        if source_artifact is not None:
-            artifact_path.unlink()
+        if source_artifact is None:
+            source_artifact = download_sdist_with_pip(python, wheel_dir, package_name, version)
 
 
 def read_poetry_version(source_dir: Path) -> str:
@@ -356,21 +421,57 @@ def read_export_extras(source_dir: Path) -> list[str]:
     return [str(extra) for extra in extras]
 
 
+def looks_binary(path: Path) -> bool:
+    if path.suffix in BINARY_VENDOR_SUFFIXES:
+        return True
+
+    with path.open("rb") as handle:
+        return b"\0" in handle.read(4096)
+
+
+def update_include_binaries(source_dir: Path) -> None:
+    cargo_vendor_dir = source_dir / "vendor" / "cargo"
+    include_binaries_path = source_dir / "debian" / "source" / "include-binaries"
+
+    binary_paths: list[str] = []
+    if cargo_vendor_dir.exists():
+        for path in sorted(cargo_vendor_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            if looks_binary(path):
+                binary_paths.append(path.relative_to(source_dir).as_posix())
+
+    if binary_paths:
+        include_binaries_path.parent.mkdir(parents=True, exist_ok=True)
+        include_binaries_path.write_text(
+            "".join(f"{relative_path}\n" for relative_path in binary_paths),
+            encoding="utf-8",
+            newline="\n",
+        )
+    else:
+        include_binaries_path.unlink(missing_ok=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-dir", required=True)
     parser.add_argument("--python", default="python3")
     parser.add_argument("--skip-cargo", action="store_true")
+    parser.add_argument("--refresh-include-binaries-only", action="store_true")
     args = parser.parse_args()
 
     source_dir = Path(args.source_dir).resolve()
-    debian_dir = source_dir / "debian"
-    vendor_dir = debian_dir / "vendor"
+    vendor_dir = source_dir / "vendor"
     wheel_dir = vendor_dir / "wheels"
     cargo_vendor_dir = vendor_dir / "cargo"
     requirements_path = vendor_dir / "exported_requirements.txt"
     poetry_version = read_poetry_version(source_dir)
     export_extras = read_export_extras(source_dir)
+
+    if args.refresh_include_binaries_only:
+        update_include_binaries(source_dir)
+        print(source_dir)
+        return 0
 
     if vendor_dir.exists():
         shutil.rmtree(vendor_dir)
@@ -441,13 +542,15 @@ def main() -> int:
                 "[source.crates-io]\n"
                 'replace-with = "vendored-sources"\n\n'
                 "[source.vendored-sources]\n"
-                'directory = "debian/vendor/cargo"\n'
+                'directory = "vendor/cargo"\n'
             ),
             encoding="utf-8",
             newline="\n",
         )
     else:
         print("Cargo.lock not found, skipping cargo vendor.")
+
+    update_include_binaries(source_dir)
 
     print(source_dir)
     return 0

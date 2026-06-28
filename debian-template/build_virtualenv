@@ -9,9 +9,24 @@ export DEB_BUILD_OPTIONS="nocheck ${DEB_BUILD_OPTIONS}"
 export HOME=/tmp
 export DH_VIRTUALENV_INSTALL_ROOT=/opt/venvs
 export PIP_NO_INDEX=1
-export PIP_FIND_LINKS="$(pwd)/debian/vendor/wheels"
-POETRY_VERSION="$(cat debian/vendor/poetry-version.txt 2>/dev/null || echo 2.1.1)"
-POETRY_EXPORT_EXTRAS="$(cat debian/vendor/export-extras.json 2>/dev/null || echo '[\"all\",\"test\",\"systemd\"]')"
+export PIP_FIND_LINKS="$(pwd)/vendor/wheels"
+
+# maturin drops $CARGO and then resolves "cargo" from PATH inside build
+# isolation, so provide an explicit shim directory with the desired toolchain.
+RUST_SHIM_DIR="$(mktemp -d)"
+trap 'rm -rf "$RUST_SHIM_DIR"' EXIT
+ln -sf /usr/lib/rust-1.96/bin/cargo "${RUST_SHIM_DIR}/cargo"
+ln -sf /usr/lib/rust-1.96/bin/rustc "${RUST_SHIM_DIR}/rustc"
+export PATH="${RUST_SHIM_DIR}:${PATH}"
+export CARGO="${RUST_SHIM_DIR}/cargo"
+export RUSTC="${RUST_SHIM_DIR}/rustc"
+export MATURIN_NO_INSTALL_RUST=1
+echo "Using cargo from: $(command -v cargo)"
+cargo --version
+echo "Using rustc from: $(command -v rustc)"
+rustc --version
+POETRY_VERSION="$(cat vendor/poetry-version.txt 2>/dev/null || echo 2.1.1)"
+POETRY_EXPORT_EXTRAS="$(cat vendor/export-extras.json 2>/dev/null || echo '[\"all\",\"test\",\"systemd\"]')"
 
 # make sure that the virtualenv links to the specific version of python, by
 # dereferencing the python3 symlink.
@@ -57,7 +72,7 @@ case "$(dpkg-architecture -qDEB_HOST_ARCH)" in
         ;;
 esac
 
-if [ ! -f debian/vendor/exported_requirements.txt ]; then
+if [ ! -f vendor/exported_requirements.txt ]; then
     # Fallback path if vendored requirements were not prepared ahead of time.
     TEMP_VENV="$(mktemp -d)"
     python3 -m venv "$TEMP_VENV"
@@ -74,13 +89,13 @@ if [ ! -f debian/vendor/exported_requirements.txt ]; then
     python3 - <<'PY'
 import json
 from pathlib import Path
-extras = json.loads(Path("debian/vendor/export-extras.json").read_text(encoding="utf-8"))
+extras = json.loads(Path("vendor/export-extras.json").read_text(encoding="utf-8"))
 for extra in extras:
     print(f"--extras {extra}")
 PY
     )"
     # shellcheck disable=SC2086
-    poetry export $POETRY_EXPORT_ARGS -o debian/vendor/exported_requirements.txt
+    poetry export $POETRY_EXPORT_ARGS -o vendor/exported_requirements.txt
     deactivate
     rm -rf "$TEMP_VENV"
 fi
@@ -90,14 +105,8 @@ DH_VIRTUALENV_PREINSTALL_ARGS=(
     --preinstall="wheel"
 )
 
-if [ -f debian/vendor/build-requirements.txt ] && [ -s debian/vendor/build-requirements.txt ]; then
-    echo "Queuing vendored build requirements from debian/vendor/build-requirements.txt"
-    while IFS= read -r requirement; do
-        if [ -z "$requirement" ] || [ "${requirement#\#}" != "$requirement" ]; then
-            continue
-        fi
-        DH_VIRTUALENV_PREINSTALL_ARGS+=(--preinstall="$requirement")
-    done < debian/vendor/build-requirements.txt
+if [ -f vendor/build-requirements.txt ] && [ -s vendor/build-requirements.txt ]; then
+    echo "Skipping global preinstall of vendor/build-requirements.txt; package-specific build isolation will install these from the vendored wheel directory."
 fi
 
 # Keep installs fully offline from the vendored wheel directory. We intentionally
@@ -110,10 +119,11 @@ dh_virtualenv \
     --upgrade-pip \
     "${DH_VIRTUALENV_PREINSTALL_ARGS[@]}" \
     --extra-pip-arg="--no-index" \
-    --extra-pip-arg="--find-links=$(pwd)/debian/vendor/wheels" \
+    --extra-pip-arg="--find-links=$(pwd)/vendor/wheels" \
     --extra-pip-arg="--no-cache-dir" \
     --extra-pip-arg="--compile" \
-    --requirements="debian/vendor/exported_requirements.txt"
+    --extra-pip-arg="--verbose" \
+    --requirements="vendor/exported_requirements.txt"
 
 PACKAGE_BUILD_DIR="$(pwd)/debian/matrix-synapse-py3"
 VIRTUALENV_DIR="${PACKAGE_BUILD_DIR}${DH_VIRTUALENV_INSTALL_ROOT}/matrix-synapse"
