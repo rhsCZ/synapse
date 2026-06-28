@@ -79,13 +79,44 @@ def extract_minimum_poetry_version(source_dir: Path) -> str:
     raise ValueError(f"Unsupported requires-poetry constraint: {poetry_requirement}")
 
 
-def write_metadata(path: Path, *, version: str, tag: str, series: str, source_dir: Path, poetry_version: str) -> None:
+def read_pyproject(source_dir: Path) -> dict:
+    pyproject_path = source_dir / "pyproject.toml"
+    if not pyproject_path.exists():
+        pyproject_path = source_dir / "build" / "pyproject.toml"
+    if not pyproject_path.exists():
+        raise FileNotFoundError("pyproject.toml was not found in the prepared source tree")
+
+    return tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+
+
+def extract_export_extras(source_dir: Path) -> list[str]:
+    pyproject = read_pyproject(source_dir)
+    desired = ["all", "test", "systemd"]
+
+    poetry_extras = pyproject.get("tool", {}).get("poetry", {}).get("extras", {})
+    project_optional = pyproject.get("project", {}).get("optional-dependencies", {})
+    available = set(poetry_extras.keys()) | set(project_optional.keys())
+
+    return [extra for extra in desired if extra in available]
+
+
+def write_metadata(
+    path: Path,
+    *,
+    version: str,
+    tag: str,
+    series: str,
+    source_dir: Path,
+    poetry_version: str,
+    export_extras: list[str],
+) -> None:
     metadata = {
         "package_name": PACKAGE_NAME,
         "package_version": version,
         "series": series,
         "tag": tag,
         "poetry_version": poetry_version,
+        "export_extras": export_extras,
         "prepared_at": datetime.now(timezone.utc).isoformat(),
         "source_dir": str(source_dir),
     }
@@ -141,6 +172,7 @@ def main() -> int:
                 path.unlink()
 
     poetry_version = extract_minimum_poetry_version(source_dir)
+    export_extras = extract_export_extras(source_dir)
     write_changelog(debian_dir / "changelog", package_version, args.series, args.tag)
     write_metadata(
         source_dir / ".packaging-info.json",
@@ -149,6 +181,7 @@ def main() -> int:
         series=args.series,
         source_dir=source_dir,
         poetry_version=poetry_version,
+        export_extras=export_extras,
     )
 
     print(source_dir)

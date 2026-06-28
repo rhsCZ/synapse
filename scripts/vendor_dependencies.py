@@ -12,6 +12,7 @@ from pathlib import Path
 
 DEFAULT_POETRY_VERSION = "2.1.1"
 POETRY_PLUGIN_EXPORT_VERSION = "1.9.0"
+DEFAULT_EXPORT_EXTRAS = ["all", "test", "systemd"]
 
 
 def run(command: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
@@ -28,6 +29,16 @@ def read_poetry_version(source_dir: Path) -> str:
     return metadata.get("poetry_version", DEFAULT_POETRY_VERSION)
 
 
+def read_export_extras(source_dir: Path) -> list[str]:
+    metadata_path = source_dir / ".packaging-info.json"
+    if not metadata_path.exists():
+        return DEFAULT_EXPORT_EXTRAS
+
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    extras = metadata.get("export_extras", DEFAULT_EXPORT_EXTRAS)
+    return [str(extra) for extra in extras]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-dir", required=True)
@@ -41,6 +52,7 @@ def main() -> int:
     cargo_vendor_dir = vendor_dir / "cargo"
     requirements_path = vendor_dir / "exported_requirements.txt"
     poetry_version = read_poetry_version(source_dir)
+    export_extras = read_export_extras(source_dir)
 
     if vendor_dir.exists():
         shutil.rmtree(vendor_dir)
@@ -48,6 +60,7 @@ def main() -> int:
     cargo_vendor_dir.mkdir(parents=True, exist_ok=True)
 
     (vendor_dir / "poetry-version.txt").write_text(poetry_version + "\n", encoding="utf-8", newline="\n")
+    (vendor_dir / "export-extras.json").write_text(json.dumps(export_extras) + "\n", encoding="utf-8", newline="\n")
 
     run(
         [
@@ -85,21 +98,11 @@ def main() -> int:
                 f"poetry-plugin-export=={POETRY_PLUGIN_EXPORT_VERSION}",
             ]
         )
-        run(
-            [
-                str(venv_dir / "bin" / "poetry"),
-                "export",
-                "--extras",
-                "all",
-                "--extras",
-                "test",
-                "--extras",
-                "systemd",
-                "-o",
-                str(requirements_path),
-            ],
-            cwd=source_dir,
-        )
+        export_command = [str(venv_dir / "bin" / "poetry"), "export"]
+        for extra in export_extras:
+            export_command.extend(["--extras", extra])
+        export_command.extend(["-o", str(requirements_path)])
+        run(export_command, cwd=source_dir)
 
     run(
         [

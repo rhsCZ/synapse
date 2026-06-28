@@ -11,6 +11,7 @@ export DH_VIRTUALENV_INSTALL_ROOT=/opt/venvs
 export PIP_NO_INDEX=1
 export PIP_FIND_LINKS="$(pwd)/debian/vendor/wheels"
 POETRY_VERSION="$(cat debian/vendor/poetry-version.txt 2>/dev/null || echo 2.1.1)"
+POETRY_EXPORT_EXTRAS="$(cat debian/vendor/export-extras.json 2>/dev/null || echo '[\"all\",\"test\",\"systemd\"]')"
 
 # make sure that the virtualenv links to the specific version of python, by
 # dereferencing the python3 symlink.
@@ -68,11 +69,17 @@ pip install \
     --no-index \
     --find-links "$PIP_FIND_LINKS" \
     "poetry==${POETRY_VERSION}" poetry-plugin-export==1.9.0
-poetry export \
-    --extras all \
-    --extras test \
-    --extras systemd \
-    -o debian/vendor/exported_requirements.txt
+POETRY_EXPORT_ARGS="$(
+python3 - <<'PY'
+import json
+from pathlib import Path
+extras = json.loads(Path("debian/vendor/export-extras.json").read_text(encoding="utf-8"))
+for extra in extras:
+    print(f"--extras {extra}")
+PY
+)"
+# shellcheck disable=SC2086
+poetry export $POETRY_EXPORT_ARGS -o debian/vendor/exported_requirements.txt
 deactivate
 rm -rf "$TEMP_VENV"
 
@@ -91,7 +98,6 @@ dh_virtualenv \
     --extra-pip-arg="--no-deps" \
     --extra-pip-arg="--no-cache-dir" \
     --extra-pip-arg="--compile" \
-    --extras="all,systemd,test" \
     --requirements="debian/vendor/exported_requirements.txt"
 
 PACKAGE_BUILD_DIR="$(pwd)/debian/matrix-synapse-py3"
