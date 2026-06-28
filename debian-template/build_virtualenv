@@ -85,14 +85,19 @@ PY
     rm -rf "$TEMP_VENV"
 fi
 
+DH_VIRTUALENV_PREINSTALL_ARGS=(
+    --preinstall="mock"
+    --preinstall="wheel"
+)
+
 if [ -f debian/vendor/build-requirements.txt ] && [ -s debian/vendor/build-requirements.txt ]; then
-    echo "Installing vendored build requirements from debian/vendor/build-requirements.txt"
-    pip install \
-        --no-index \
-        --find-links "$PIP_FIND_LINKS" \
-        --no-cache-dir \
-        --compile \
-        -r debian/vendor/build-requirements.txt
+    echo "Queuing vendored build requirements from debian/vendor/build-requirements.txt"
+    while IFS= read -r requirement; do
+        if [ -z "$requirement" ] || [ "${requirement#\#}" != "$requirement" ]; then
+            continue
+        fi
+        DH_VIRTUALENV_PREINSTALL_ARGS+=(--preinstall="$requirement")
+    done < debian/vendor/build-requirements.txt
 fi
 
 # Use --no-deps to only install pinned versions in exported_requirements.txt,
@@ -102,8 +107,7 @@ dh_virtualenv \
     --builtin-venv \
     --python "$SNAKE" \
     --upgrade-pip \
-    --preinstall="mock" \
-    --preinstall="wheel" \
+    "${DH_VIRTUALENV_PREINSTALL_ARGS[@]}" \
     --extra-pip-arg="--no-index" \
     --extra-pip-arg="--find-links=$(pwd)/debian/vendor/wheels" \
     --extra-pip-arg="--no-deps" \
