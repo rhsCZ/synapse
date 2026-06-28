@@ -14,13 +14,23 @@ export PIP_FIND_LINKS="$(pwd)/vendor/wheels"
 # maturin drops $CARGO and then resolves "cargo" from PATH inside build
 # isolation, so provide an explicit shim directory with the desired toolchain.
 RUST_SHIM_DIR="$(mktemp -d)"
-trap 'rm -rf "$RUST_SHIM_DIR"' EXIT
 ln -sf /usr/lib/rust-1.96/bin/cargo "${RUST_SHIM_DIR}/cargo"
 ln -sf /usr/lib/rust-1.96/bin/rustc "${RUST_SHIM_DIR}/rustc"
 export PATH="${RUST_SHIM_DIR}:${PATH}"
 export CARGO="${RUST_SHIM_DIR}/cargo"
 export RUSTC="${RUST_SHIM_DIR}/rustc"
 export MATURIN_NO_INSTALL_RUST=1
+CARGO_HOME_DIR="$(mktemp -d)"
+cat > "${CARGO_HOME_DIR}/config.toml" <<EOF
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "$(pwd)/vendor/cargo"
+EOF
+export CARGO_HOME="${CARGO_HOME_DIR}"
+export CARGO_NET_OFFLINE=true
+trap 'rm -rf "$RUST_SHIM_DIR" "$CARGO_HOME_DIR"' EXIT
 echo "Using cargo from: $(command -v cargo)"
 cargo --version
 echo "Using rustc from: $(command -v rustc)"

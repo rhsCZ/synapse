@@ -47,6 +47,7 @@ BINARY_VENDOR_SUFFIXES = {
     ".png",
     ".so",
 }
+CARGO_EXECUTABLE = Path("/usr/lib/rust-1.96/bin/cargo") if Path("/usr/lib/rust-1.96/bin/cargo").exists() else Path("cargo")
 
 
 def run(command: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
@@ -317,6 +318,25 @@ def read_pyproject_from_sdist(artifact_path: Path) -> dict | None:
     return None
 
 
+def extract_sdist(artifact_path: Path, destination: Path) -> Path:
+    destination.mkdir(parents=True, exist_ok=True)
+
+    if artifact_path.name.endswith(".tar.gz"):
+        with tarfile.open(artifact_path, "r:gz") as archive:
+            archive.extractall(destination)
+    elif artifact_path.suffix == ".zip":
+        with zipfile.ZipFile(artifact_path) as archive:
+            archive.extractall(destination)
+    else:
+        raise ValueError(f"Unsupported sdist format: {artifact_path}")
+
+    extracted_dirs = [path for path in destination.iterdir() if path.is_dir()]
+    if len(extracted_dirs) != 1:
+        raise RuntimeError(f"Expected one extracted directory in {destination}, found {len(extracted_dirs)}")
+
+    return extracted_dirs[0]
+
+
 def discover_build_requirements(artifact_path: Path) -> list[str]:
     pyproject = read_pyproject_from_sdist(artifact_path)
     if pyproject is None:
@@ -400,6 +420,28 @@ def replace_platform_wheels_with_sdists(python: str, wheel_dir: Path, artifact_p
         source_artifact = download_sdist_from_pypi(package_name, version, wheel_dir)
         if source_artifact is None:
             source_artifact = download_sdist_with_pip(python, wheel_dir, package_name, version)
+
+
+def vendor_cargo_dependencies(source_dir: Path, cargo_vendor_dir: Path, wheel_dir: Path) -> None:
+    with tempfile.TemporaryDirectory() as temp_dir_name:
+        temp_dir = Path(temp_dir_name)
+        command = [str(CARGO_EXECUTABLE), "vendor", "--locked", "--versioned-dirs"]
+
+        for artifact_path in sorted(wheel_dir.iterdir()):
+            if not artifact_path.is_file():
+                continue
+            if not (artifact_path.name.endswith(".tar.gz") or artifact_path.suffix == ".zip"):
+                continue
+
+            extract_dir = temp_dir / artifact_path.name.removesuffix(".tar.gz").removesuffix(".zip")
+            extracted_root = extract_sdist(artifact_path, extract_dir)
+            cargo_toml = extracted_root / "Cargo.toml"
+            cargo_lock = extracted_root / "Cargo.lock"
+            if cargo_toml.exists() and cargo_lock.exists():
+                command.extend(["--sync", str(cargo_toml)])
+
+        command.append(str(cargo_vendor_dir))
+        run(command, cwd=source_dir)
 
 
 def read_poetry_version(source_dir: Path) -> str:
@@ -534,7 +576,7 @@ def main() -> int:
     if args.skip_cargo:
         print("Skipping cargo vendor as requested.")
     elif cargo_lock.exists():
-        run(["cargo", "vendor", "--locked", str(cargo_vendor_dir)], cwd=source_dir)
+        vendor_cargo_dependencies(source_dir, cargo_vendor_dir, wheel_dir)
         cargo_config_dir = source_dir / ".cargo"
         cargo_config_dir.mkdir(parents=True, exist_ok=True)
         (cargo_config_dir / "config.toml").write_text(
