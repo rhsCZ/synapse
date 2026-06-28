@@ -13,11 +13,72 @@ from pathlib import Path
 DEFAULT_POETRY_VERSION = "2.1.1"
 POETRY_PLUGIN_EXPORT_VERSION = "1.9.0"
 DEFAULT_EXPORT_EXTRAS = ["all", "test", "systemd"]
+TOOLING_WHEEL_PREFIXES = (
+    "pip-",
+    "setuptools-",
+    "wheel-",
+    "poetry-",
+    "poetry_core-",
+    "poetry_plugin_export-",
+)
 
 
 def run(command: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
     print("+", " ".join(command))
     subprocess.run(command, cwd=cwd, env=env, check=True)
+
+
+def parse_wheel_requirement(filename: str) -> tuple[str, str] | None:
+    if not filename.endswith(".whl"):
+        return None
+
+    parts = filename[:-4].split("-")
+    if len(parts) < 5:
+        return None
+
+    distribution = "-".join(parts[:-4]).replace("_", "-")
+    version = parts[-4].replace("_", "-")
+    if not distribution or not version:
+        return None
+
+    return distribution, version
+
+
+def replace_platform_wheels_with_sdists(python: str, wheel_dir: Path, artifact_paths: list[Path]) -> None:
+    for artifact_path in artifact_paths:
+        if artifact_path.suffix != ".whl":
+            continue
+        if artifact_path.name.endswith("none-any.whl"):
+            continue
+        if artifact_path.name.startswith(TOOLING_WHEEL_PREFIXES):
+            continue
+
+        requirement = parse_wheel_requirement(artifact_path.name)
+        if requirement is None:
+            continue
+
+        package_name, version = requirement
+        before_download = set(wheel_dir.iterdir())
+        run(
+            [
+                python,
+                "-m",
+                "pip",
+                "download",
+                "--dest",
+                str(wheel_dir),
+                "--no-deps",
+                "--no-binary=:all:",
+                f"{package_name}=={version}",
+            ]
+        )
+        new_sources = [
+            path
+            for path in wheel_dir.iterdir()
+            if path not in before_download and (path.name.endswith(".tar.gz") or path.suffix == ".zip")
+        ]
+        if new_sources:
+            artifact_path.unlink()
 
 
 def read_poetry_version(source_dir: Path) -> str:
@@ -104,6 +165,7 @@ def main() -> int:
         export_command.extend(["-o", str(requirements_path)])
         run(export_command, cwd=source_dir)
 
+    existing_artifacts = set(wheel_dir.iterdir())
     run(
         [
             args.python,
@@ -116,6 +178,8 @@ def main() -> int:
             str(requirements_path),
         ]
     )
+    downloaded_artifacts = [path for path in wheel_dir.iterdir() if path not in existing_artifacts]
+    replace_platform_wheels_with_sdists(args.python, wheel_dir, downloaded_artifacts)
 
     cargo_lock = source_dir / "Cargo.lock"
     if cargo_lock.exists():

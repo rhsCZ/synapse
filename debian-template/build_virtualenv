@@ -57,31 +57,33 @@ case "$(dpkg-architecture -qDEB_HOST_ARCH)" in
         ;;
 esac
 
-# Manually install Poetry and export a pip-compatible `requirements.txt`
-TEMP_VENV="$(mktemp -d)"
-python3 -m venv "$TEMP_VENV"
-source "$TEMP_VENV/bin/activate"
-pip install \
-    --no-index \
-    --find-links "$PIP_FIND_LINKS" \
-    -U pip setuptools wheel
-pip install \
-    --no-index \
-    --find-links "$PIP_FIND_LINKS" \
-    "poetry==${POETRY_VERSION}" poetry-plugin-export==1.9.0
-POETRY_EXPORT_ARGS="$(
-python3 - <<'PY'
+if [ ! -f debian/vendor/exported_requirements.txt ]; then
+    # Fallback path if vendored requirements were not prepared ahead of time.
+    TEMP_VENV="$(mktemp -d)"
+    python3 -m venv "$TEMP_VENV"
+    source "$TEMP_VENV/bin/activate"
+    pip install \
+        --no-index \
+        --find-links "$PIP_FIND_LINKS" \
+        -U pip setuptools wheel
+    pip install \
+        --no-index \
+        --find-links "$PIP_FIND_LINKS" \
+        "poetry==${POETRY_VERSION}" poetry-plugin-export==1.9.0
+    POETRY_EXPORT_ARGS="$(
+    python3 - <<'PY'
 import json
 from pathlib import Path
 extras = json.loads(Path("debian/vendor/export-extras.json").read_text(encoding="utf-8"))
 for extra in extras:
     print(f"--extras {extra}")
 PY
-)"
-# shellcheck disable=SC2086
-poetry export $POETRY_EXPORT_ARGS -o debian/vendor/exported_requirements.txt
-deactivate
-rm -rf "$TEMP_VENV"
+    )"
+    # shellcheck disable=SC2086
+    poetry export $POETRY_EXPORT_ARGS -o debian/vendor/exported_requirements.txt
+    deactivate
+    rm -rf "$TEMP_VENV"
+fi
 
 # Use --no-deps to only install pinned versions in exported_requirements.txt,
 # and to avoid https://github.com/pypa/pip/issues/9644
