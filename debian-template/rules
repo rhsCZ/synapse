@@ -14,6 +14,11 @@ override_dh_strip:
 
 override_dh_auto_configure:
 
+# Keep vendored Cargo sources intact; dh_clean otherwise removes
+# backup-like files such as Cargo.toml.orig that Cargo expects.
+override_dh_clean:
+	dh_clean -Xvendor/cargo
+
 # many libraries pulled from PyPI have allocatable sections after
 # non-allocatable ones on which dwz errors out. For those without the issue the
 # gains are only marginal
