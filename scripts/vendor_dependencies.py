@@ -28,9 +28,6 @@ TOOLING_WHEEL_PREFIXES = (
     "poetry_core-",
     "poetry_plugin_export-",
 )
-KEEP_PLATFORM_WHEELS = {
-    "maturin",
-}
 BINARY_VENDOR_SUFFIXES = {
     ".a",
     ".bin",
@@ -141,6 +138,34 @@ def parse_wheel_requirement(filename: str) -> tuple[str, str] | None:
         return None
 
     return distribution, version
+
+
+def extract_requirement_name(requirement: str) -> str:
+    token = requirement.strip().split(";", 1)[0].strip()
+    for separator in ("[", "<", ">", "=", "!", "~", " "):
+        token = token.split(separator, 1)[0]
+    return token.replace("_", "-").strip()
+
+
+def is_universal_wheel(path: Path) -> bool:
+    return path.name.endswith("none-any.whl")
+
+
+def prune_platform_wheels_for_requirement(wheel_dir: Path, package_name: str, version: str) -> None:
+    prefixes = (
+        f"{package_name.replace('-', '_')}-{version.replace('-', '_')}-",
+        f"{package_name.replace('-', '_')}-{version}-",
+        f"{package_name}-{version.replace('-', '_')}-",
+        f"{package_name}-{version}-",
+    )
+    for path in wheel_dir.iterdir():
+        if not path.is_file() or path.suffix != ".whl":
+            continue
+        if not path.name.startswith(prefixes):
+            continue
+        if is_universal_wheel(path):
+            continue
+        path.unlink()
 
 
 def download_sdist_from_pypi(package_name: str, version: str, wheel_dir: Path) -> Path | None:
@@ -263,6 +288,8 @@ def download_exported_requirements(python: str, requirements_path: Path, wheel_d
 
 
 def download_build_requirement(python: str, wheel_dir: Path, requirement: str) -> None:
+    requirement_name = extract_requirement_name(requirement)
+    before = set(wheel_dir.iterdir())
     binary_result = run_result(
         [
             python,
@@ -277,6 +304,26 @@ def download_build_requirement(python: str, wheel_dir: Path, requirement: str) -
         ]
     )
     if binary_result.returncode == 0:
+        downloaded = [path for path in wheel_dir.iterdir() if path not in before and path.is_file()]
+        platform_wheels = [path for path in downloaded if path.suffix == ".whl" and not is_universal_wheel(path)]
+        if platform_wheels:
+            source_result = run_result(
+                [
+                    python,
+                    "-m",
+                    "pip",
+                    "download",
+                    "--dest",
+                    str(wheel_dir),
+                    "--no-deps",
+                    "--no-binary=:all:",
+                    requirement,
+                ]
+            )
+            if source_result.returncode != 0:
+                raise subprocess.CalledProcessError(source_result.returncode, source_result.args)
+            for wheel_path in platform_wheels:
+                wheel_path.unlink(missing_ok=True)
         return
 
     source_result = run_result(
@@ -288,6 +335,7 @@ def download_build_requirement(python: str, wheel_dir: Path, requirement: str) -
             "--dest",
             str(wheel_dir),
             "--no-deps",
+            "--no-binary=:all:",
             requirement,
         ]
     )
@@ -415,11 +463,11 @@ def replace_platform_wheels_with_sdists(python: str, wheel_dir: Path, artifact_p
             continue
 
         package_name, version = requirement
-        if package_name in KEEP_PLATFORM_WHEELS:
-            continue
         source_artifact = download_sdist_from_pypi(package_name, version, wheel_dir)
         if source_artifact is None:
             source_artifact = download_sdist_with_pip(python, wheel_dir, package_name, version)
+        if source_artifact is not None:
+            artifact_path.unlink(missing_ok=True)
 
 
 def vendor_cargo_dependencies(source_dir: Path, cargo_vendor_dir: Path, wheel_dir: Path) -> None:
