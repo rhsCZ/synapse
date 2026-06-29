@@ -63,7 +63,7 @@ case "$(dpkg-architecture -qDEB_HOST_ARCH)" in
         export CFLAGS="-march=armv8-a"
         ;;
     armhf)
-        export CFLAGS="-march=armv7-a"
+        export CFLAGS="-march=armv7-a+fp -mfpu=vfpv3-d16"
         ;;
     i386)
         export CFLAGS="-march=i686"
