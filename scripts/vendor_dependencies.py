@@ -483,9 +483,10 @@ def vendor_cargo_dependencies(source_dir: Path, cargo_vendor_dir: Path, wheel_di
 
             extract_dir = temp_dir / artifact_path.name.removesuffix(".tar.gz").removesuffix(".zip")
             extracted_root = extract_sdist(artifact_path, extract_dir)
-            cargo_toml = extracted_root / "Cargo.toml"
-            cargo_lock = extracted_root / "Cargo.lock"
-            if cargo_toml.exists() and cargo_lock.exists():
+            for cargo_toml in sorted(extracted_root.rglob("Cargo.toml")):
+                cargo_lock = cargo_toml.with_name("Cargo.lock")
+                if not cargo_lock.exists():
+                    continue
                 command.extend(["--sync", str(cargo_toml)])
 
         command.append(str(cargo_vendor_dir))
