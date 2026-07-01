@@ -148,6 +148,7 @@ def write_metadata(
     path: Path,
     *,
     version: str,
+    upstream_version: str,
     tag: str,
     series: str,
     source_dir: Path,
@@ -158,6 +159,7 @@ def write_metadata(
     metadata = {
         "package_name": PACKAGE_NAME,
         "package_version": version,
+        "upstream_version": upstream_version,
         "series": series,
         "tag": tag,
         "revision": revision,
@@ -189,8 +191,9 @@ def main() -> int:
 
     suffix_prefix = read_series_suffix_prefix(config_path, args.series)
     revision = read_upload_revision(upload_state_path, args.version, args.series)
-    package_version = f"{args.version}+{suffix_prefix}{revision}"
-    source_dir = output_dir / f"{PACKAGE_NAME}-{package_version}"
+    upstream_version = args.version
+    package_version = f"{upstream_version}-0{suffix_prefix}{revision}"
+    source_dir = output_dir / f"{PACKAGE_NAME}-{upstream_version}"
 
     if source_dir.exists():
         shutil.rmtree(source_dir)
@@ -212,6 +215,7 @@ def main() -> int:
 
     generated_files = [
         debian_dir / "files",
+        source_dir / ".cargo",
         source_dir / "vendor",
     ]
     for path in generated_files:
@@ -225,8 +229,9 @@ def main() -> int:
     export_extras = extract_export_extras(source_dir)
     write_changelog(debian_dir / "changelog", package_version, args.series, args.tag)
     write_metadata(
-        source_dir / ".packaging-info.json",
+        debian_dir / ".packaging-info.json",
         version=package_version,
+        upstream_version=upstream_version,
         tag=args.tag,
         series=args.series,
         source_dir=source_dir,

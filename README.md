@@ -74,6 +74,7 @@ Notes:
 
 ## Notes
 
-- The current template keeps Debian source format `3.0 (native)` to match the packaging you already have.
+- The current template builds a non-native Debian source package in format `3.0 (quilt)`.
 - Vendoring is done during the GitHub workflow because Launchpad builders cannot fetch from PyPI or crates.io during package builds.
-- Upload suffixes are tracked per upstream version and Ubuntu series. Re-uploading `1.155.0` for `noble` increments the package version from `1.155.0+noble1` to `1.155.0+noble2`.
+- Upload suffixes are tracked per upstream version and Ubuntu series. Re-uploading `1.155.0` for `noble` increments the package version from `1.155.0-0noble1` to `1.155.0-0noble2`.
+- Source builds are split into `*.orig.tar.xz` for upstream sources, `*.orig-vendor.tar.xz` for vendored offline dependencies, and `*.debian.tar.xz` for Debian packaging changes.
