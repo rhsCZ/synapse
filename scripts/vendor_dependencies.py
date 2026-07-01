@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import time
@@ -46,10 +45,6 @@ BINARY_VENDOR_SUFFIXES = {
     ".so",
 }
 CARGO_EXECUTABLE = Path("/usr/lib/rust-1.96/bin/cargo") if Path("/usr/lib/rust-1.96/bin/cargo").exists() else Path("cargo")
-RISCV64_TARGET_LEXICON_ALIAS = (
-    '            "riscv64gc" => Riscv64gc,\n'
-    '            "riscv64a23" => Riscv64gc,\n'
-)
 
 
 def run(command: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
@@ -498,33 +493,6 @@ def vendor_cargo_dependencies(source_dir: Path, cargo_vendor_dir: Path, wheel_di
         run(command, cwd=source_dir)
 
 
-def patch_target_lexicon_riscv64_alias(cargo_vendor_dir: Path) -> None:
-    for crate_dir in sorted(cargo_vendor_dir.glob("target-lexicon-0.13.2")):
-        targets_path = crate_dir / "src" / "targets.rs"
-        checksum_path = crate_dir / ".cargo-checksum.json"
-        if not targets_path.exists() or not checksum_path.exists():
-            continue
-
-        original = targets_path.read_text(encoding="utf-8")
-        if '"riscv64a23"' in original:
-            continue
-
-        needle = '            "riscv64gc" => Riscv64gc,\n'
-        if needle not in original:
-            raise RuntimeError(f"Unable to patch {targets_path}: expected riscv64gc match not found")
-
-        updated = original.replace(needle, RISCV64_TARGET_LEXICON_ALIAS, 1)
-        targets_path.write_text(updated, encoding="utf-8", newline="\n")
-
-        checksum_data = json.loads(checksum_path.read_text(encoding="utf-8"))
-        checksum_data["files"]["src/targets.rs"] = hashlib.sha256(updated.encode("utf-8")).hexdigest()
-        checksum_path.write_text(
-            json.dumps(checksum_data, sort_keys=True, separators=(",", ":")),
-            encoding="utf-8",
-            newline="\n",
-        )
-
-
 def read_poetry_version(source_dir: Path) -> str:
     metadata_path = source_dir / "debian" / ".packaging-info.json"
     if not metadata_path.exists():
@@ -658,7 +626,6 @@ def main() -> int:
         print("Skipping cargo vendor as requested.")
     elif cargo_lock.exists():
         vendor_cargo_dependencies(source_dir, cargo_vendor_dir, wheel_dir)
-        patch_target_lexicon_riscv64_alias(cargo_vendor_dir)
     else:
         print("Cargo.lock not found, skipping cargo vendor.")
 
