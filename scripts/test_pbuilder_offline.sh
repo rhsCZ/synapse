@@ -186,19 +186,9 @@ restore_vendor_from_source_tarball() {
     local source_dist_dir="$2"
 
     local source_tarball=""
-    source_tarball="$(find "${source_dist_dir}" -maxdepth 1 -type f -name 'matrix-synapse-py3_*.orig-vendor.tar.*' | sort | tail -n 1)"
-    if [ -z "${source_tarball}" ]; then
-        source_tarball="$(find "${source_dist_dir}" -maxdepth 1 -type f -name 'matrix-synapse-py3_*.tar.*' | sort | tail -n 1)"
-    fi
+    source_tarball="$(find "${source_dist_dir}" -maxdepth 1 -type f -name 'matrix-synapse-py3_*.tar.*' | sort | tail -n 1)"
     if [ -z "${source_tarball}" ] || [ ! -f "${source_tarball}" ]; then
         return 1
-    fi
-
-    if [[ "${source_tarball}" == *.orig-vendor.tar.* ]]; then
-        rm -rf "${source_dir}/vendor"
-        mkdir -p "${source_dir}/vendor"
-        tar -xf "${source_tarball}" -C "${source_dir}/vendor"
-        return 0
     fi
 
     local package_root
