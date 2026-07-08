@@ -57,6 +57,21 @@ def run_result(command: list[str], *, cwd: Path | None = None, env: dict[str, st
     return subprocess.run(command, cwd=cwd, env=env, text=True)
 
 
+def run_capture(command: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    print("+", " ".join(command))
+    result = subprocess.run(
+        command,
+        cwd=cwd,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    if result.stdout:
+        print(result.stdout, end="")
+    return result
+
+
 def venv_executable(venv_dir: Path, name: str) -> Path:
     scripts_dir = venv_dir / "Scripts"
     if scripts_dir.exists():
@@ -512,6 +527,28 @@ def read_export_extras(source_dir: Path) -> list[str]:
     return [str(extra) for extra in extras]
 
 
+def export_requirements_with_poetry(poetry: str, source_dir: Path, export_extras: list[str], requirements_path: Path) -> None:
+    export_command = [poetry, "export"]
+    for extra in export_extras:
+        export_command.extend(["--extras", extra])
+    export_command.extend(["-o", str(requirements_path)])
+
+    result = run_capture(export_command, cwd=source_dir)
+    if result.returncode == 0:
+        return
+
+    output = result.stdout or ""
+    if "pyproject.toml changed significantly since poetry.lock was last generated" not in output:
+        raise subprocess.CalledProcessError(result.returncode, export_command)
+
+    print("poetry.lock is outdated for the current pyproject.toml; regenerating lock file and retrying export.")
+    run([poetry, "lock", "--no-interaction"], cwd=source_dir)
+
+    retry = run_capture(export_command, cwd=source_dir)
+    if retry.returncode != 0:
+        raise subprocess.CalledProcessError(retry.returncode, export_command)
+
+
 def looks_binary(path: Path) -> bool:
     if path.suffix in BINARY_VENDOR_SUFFIXES:
         return True
@@ -609,11 +646,12 @@ def main() -> int:
                 f"poetry-plugin-export=={POETRY_PLUGIN_EXPORT_VERSION}",
             ]
         )
-        export_command = [str(venv_executable(venv_dir, "poetry")), "export"]
-        for extra in export_extras:
-            export_command.extend(["--extras", extra])
-        export_command.extend(["-o", str(requirements_path)])
-        run(export_command, cwd=source_dir)
+        export_requirements_with_poetry(
+            str(venv_executable(venv_dir, "poetry")),
+            source_dir,
+            export_extras,
+            requirements_path,
+        )
 
     existing_artifacts = set(wheel_dir.iterdir())
     download_exported_requirements(args.python, requirements_path, wheel_dir)
