@@ -20,11 +20,11 @@ PACKAGE_NAME = "matrix-synapse-py3"
 MAINTAINER = "Synapse Packaging team <packages@matrix.org>"
 
 
-def read_series_suffix_prefix(config_path: Path, series_name: str) -> str:
+def read_series_ubuntu_version(config_path: Path, series_name: str) -> str:
     config = json.loads(config_path.read_text(encoding="utf-8"))
     for item in config["series"]:
         if item["name"] == series_name:
-            return item["version_suffix_prefix"]
+            return item["ubuntu_version"]
     raise ValueError(f"Unknown series '{series_name}' in {config_path}")
 
 
@@ -187,9 +187,9 @@ def main() -> int:
     upload_state_path = Path(args.upload_state).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    suffix_prefix = read_series_suffix_prefix(config_path, args.series)
+    ubuntu_version = read_series_ubuntu_version(config_path, args.series)
     revision = read_upload_revision(upload_state_path, args.version, args.series)
-    package_version = f"{args.version}+{suffix_prefix}{revision}"
+    package_version = f"{args.version}-{ubuntu_version}+0ubuntu{revision}"
     source_dir = output_dir / f"{PACKAGE_NAME}-{package_version}"
 
     if source_dir.exists():

@@ -2,11 +2,11 @@
   "series": [
     {
       "name": "noble",
-      "version_suffix_prefix": "noble"
+      "ubuntu_version": "24.04"
     },
     {
       "name": "resolute",
-      "version_suffix_prefix": "resolute"
+      "ubuntu_version": "26.04"
     }
   ]
 }
