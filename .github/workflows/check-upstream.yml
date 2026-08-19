@@ -9,7 +9,7 @@ permissions:
   contents: write
   
 concurrency:
-  group: check-upstream-release
+  group: ${{ github.workflow }}
   cancel-in-progress: false
 
 jobs:
