@@ -7,6 +7,10 @@ on:
 
 permissions:
   contents: write
+  
+concurrency:
+  group: check-upstream-release
+  cancel-in-progress: false
 
 jobs:
   detect:
