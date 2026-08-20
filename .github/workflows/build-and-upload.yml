@@ -58,9 +58,9 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -89,7 +89,7 @@ jobs:
             python3-venv \
             python3-wheel
 
-      - uses: crazy-max/ghaction-import-gpg@v6
+      - uses: crazy-max/ghaction-import-gpg@v7
         with:
           gpg_private_key: ${{ secrets.LAUNCHPAD_GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.LAUNCHPAD_GPG_PASSPHRASE }}
@@ -120,7 +120,7 @@ jobs:
           changes_file="$(find "dist/${{ matrix.series }}" -maxdepth 1 -name '*_source.changes' -print -quit)"
           bash scripts/upload_to_ppa.sh "${changes_file}" "${LAUNCHPAD_PPA}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: source-package-${{ inputs.version }}-${{ matrix.series }}
           path: |
@@ -134,9 +134,12 @@ jobs:
     if: inputs.update_state && needs.build_upload.result == 'success'
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -162,6 +165,7 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
           git add versions/state.json versions/uploads.json
           git commit -m "Track upstream release ${{ inputs.version }}"
           git push

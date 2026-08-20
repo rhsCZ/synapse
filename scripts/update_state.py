@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 
 def load_json(path: Path, default: dict) -> dict:
@@ -23,11 +24,12 @@ def main() -> int:
     parser.add_argument("--series", action="append", default=[])
     args = parser.parse_args()
 
+    current_time = datetime.now(ZoneInfo("Europe/Prague"))
     state_path = Path(args.state)
     state = {
         "latest_version": args.version,
         "latest_tag": args.tag,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": current_time.strftime("%d.%m.%Y %H:%M:%S %z"),
     }
     state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8", newline="\n")
 
