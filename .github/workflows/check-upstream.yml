@@ -59,9 +59,21 @@ jobs:
         with:
           toolchain: "1.96.0"
 
+      - name: Configure DNS and APT repositories
+        run: |
+          sudo systemctl disable --now systemd-resolved.service
+          sudo rm -f /etc/resolv.conf
+          printf 'nameserver 1.1.1.1\nnameserver 1.0.0.1\nnameserver 2606:4700:4700::1111\nnameserver 2606:4700:4700::1001\n' | sudo tee /etc/resolv.conf > /dev/null
+          . /etc/os-release
+          CODENAME="${UBUNTU_CODENAME:-$VERSION_CODENAME}"
+          test -n "$CODENAME" || { echo "Unable to determine Ubuntu codename"; exit 1; }
+          printf 'Types: deb\nURIs: http://archive.ubuntu.com/ubuntu/\nSuites: %s %s-updates %s-backports\nComponents: main restricted universe multiverse\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n\nTypes: deb\nURIs: http://security.ubuntu.com/ubuntu/\nSuites: %s-security\nComponents: main restricted universe multiverse\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' "$CODENAME" "$CODENAME" "$CODENAME" "$CODENAME" | sudo tee /etc/apt/sources.list.d/ubuntu.sources > /dev/null
+          cat /etc/resolv.conf
+          cat /etc/apt/sources.list.d/ubuntu.sources
+
       - name: Install packaging tools
         run: |
-          sudo apt-get update
+          sudo apt-get update -o APT::Update::Error-Mode=any -o Acquire::Retries=3
           sudo apt-get install -y \
             debhelper \
             devscripts \
