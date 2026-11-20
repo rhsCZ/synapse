@@ -61,8 +61,8 @@ jobs:
 
       - name: Configure DNS and APT repositories
         run: |
-          sudo systemctl disable --now systemd-resolved.service
-          sudo rm -f /etc/resolv.conf
+          sudo systemctl disable --now systemd-resolved.service || true
+          sudo rm -f /etc/resolv.conf || true
           printf 'nameserver 1.1.1.1\nnameserver 1.0.0.1\nnameserver 2606:4700:4700::1111\nnameserver 2606:4700:4700::1001\n' | sudo tee /etc/resolv.conf > /dev/null
           . /etc/os-release
           CODENAME="${UBUNTU_CODENAME:-$VERSION_CODENAME}"
